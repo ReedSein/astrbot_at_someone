@@ -72,7 +72,6 @@ class AtSomeonePlugin(Star):
                 
                 if user_id_to_at is not None:
                     new_chain.append(Comp.At(qq=user_id_to_at))
-                    new_chain.append(Comp.Plain('\u200B \u200B'))
                 
                 last_end = end
 
