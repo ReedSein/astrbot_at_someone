@@ -10,7 +10,7 @@ from astrbot.core.message.components import BaseMessageComponent
     "at_someone",
     "sasapp77",
     "让bot学会主动@别人，需要配合系统提示词",
-    "1.0.6",
+    "1.0.7",
     ""
 )
 class AtSomeonePlugin(Star):
@@ -21,32 +21,28 @@ class AtSomeonePlugin(Star):
         self.at_pattern = re.compile(r"<@(.*?)>")
 
     # -------------------------------------------------------------------------
-    # Stage 1: 预处理 (Pre-processing) / 粘合剂 + 强制空格
+    # Stage 1: 预处理 (Pre-processing)
+    # 时机：在核心分段器工作之前
+    # 作用：把换行符碾平为普通空格，骗过分段器，确保 At 和后面的话在同一条消息里。
     # -------------------------------------------------------------------------
     @filter.on_llm_response()
     async def flatten_newlines(self, event: AstrMessageEvent, resp: LLMResponse):
-        """
-        1. 防止分段：将换行符替换为空格。
-        2. 强制间隔：将 <@xxx> 后面的任意空白（或无空白）强制替换为一个标准空格。
-        """
         if resp.completion_text:
-            # 解释：\s* 匹配0个或多个空白。
-            # 无论 LLM 输出 "<@user>text" 还是 "<@user>\ntext"
-            # 都会被替换为 "<@user> text" (注意中间有个空格)
-            resp.completion_text = re.sub(r'(<@.*?>)\s*', r'\1 ', resp.completion_text)
+            # 逻辑: 找到 <@...>，如果后面紧跟着任何空白字符序列(包括换行)，替换为单个普通空格
+            # 这样 AstrBot 的 Splitter 就会认为这是一整句话
+            resp.completion_text = re.sub(r'(<@.*?>)\s+', r'\1 ', resp.completion_text)
 
     # -------------------------------------------------------------------------
     # Stage 2: 渲染 (Rendering)
+    # 时机：在分段之后，发送之前
+    # 作用：解析 At，并插入零宽空格三明治，确保 QQ 客户端显示漂亮的间隔。
     # -------------------------------------------------------------------------
     @filter.on_decorating_result(priority=-200)
     async def handle_at_conversion(self, event: AstrMessageEvent):
-        """
-        将文本中的 <@xxx> 标签转换为真实的 At 消息组件。
-        """
         result = event.get_result()
         msg_chain = result.chain
         
-        # 1. 快速检查
+        # 1. 快速性能检查
         has_tag = False
         for component in msg_chain:
             if isinstance(component, Comp.Plain) and "<@" in component.text:
@@ -58,7 +54,7 @@ class AtSomeonePlugin(Star):
 
         new_chain: list[BaseMessageComponent] = []
 
-        # 2. 私聊逻辑
+        # 2. 私聊逻辑：移除标签
         if event.is_private_chat():
             for component in msg_chain:
                 if isinstance(component, Comp.Plain):
@@ -70,7 +66,7 @@ class AtSomeonePlugin(Star):
             result.chain = new_chain
             return
 
-        # 3. 群聊逻辑
+        # 3. 群聊逻辑：获取群员信息
         group = await event.get_group()
         if not group or not group.members:
             return
@@ -86,7 +82,7 @@ class AtSomeonePlugin(Star):
             if card:
                 members_map[card] = member.user_id
 
-        # 4. 遍历并重组消息链
+        # 4. 重组消息链
         for component in msg_chain:
             if not isinstance(component, Comp.Plain):
                 new_chain.append(component)
@@ -118,13 +114,14 @@ class AtSomeonePlugin(Star):
                 
                 # C. 构建组件
                 if user_id_to_at is not None:
+                    # 1. 真实的 At
                     new_chain.append(Comp.At(qq=user_id_to_at))
-                    # 【重要修改】
-                    # 这里不再单独添加 Comp.Plain(text=' ') 组件
-                    # 因为单独的空格组件容易被客户端吞掉。
-                    # 我们依赖 Stage 1 强制生成的空格，让它留在 remaining_text 的开头。
+                    
+                    # 2. 【拟人化魔法】：零宽空格 + 普通空格 + 零宽空格
+                    # 这确保了适配器保留中间的空格，且不会被分段器切分（因为分段早就不管这里了）
+                    new_chain.append(Comp.Plain(text='\u200B \u200B')) 
                 else:
-                    # 解析失败
+                    # 解析失败回退
                     new_chain.append(Comp.Plain(text=match.group(0)))
                 
                 last_end = end
@@ -132,13 +129,8 @@ class AtSomeonePlugin(Star):
             # 5. 添加剩余文本
             if last_end < len(text):
                 remaining_text = text[last_end:]
-                
-                # 【重要修改】
-                # 删除了 .lstrip()。
-                # 因为 Stage 1 保证了 remaining_text 一定是以空格开头的 (例如 " 嗯。快点...")
-                # 我们保留这个空格，让它作为 Plain 文本的一部分发送。
-                # 这样客户端就会乖乖渲染出 "[At] 嗯。快点..." (中间有空隙)
-                
+                # 去除 Stage 1 产生的粘合剂空格，防止双重空格
+                remaining_text = remaining_text.lstrip()
                 if remaining_text:
                     new_chain.append(Comp.Plain(text=remaining_text))
 
