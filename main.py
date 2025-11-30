@@ -11,10 +11,10 @@ from astrbot.core.star.star_handler import star_handlers_registry
 
 @register(
     "at_someone",          # 插件名称
-    "sasapp77 & ReedSein",            # 插件作者
+    "sasapp77",            # 插件作者
     "让bot学会主动@别人，需要配合系统提示词",  # 插件描述
-    "1.3.0",               # 插件版本
-    "https://github.com/ReedSein/astrbot_at_someone"                     # 插件仓库地址
+    "1.0.0",               # 插件版本
+    ""                     # 插件仓库地址
 )
 class AtSomeonePlugin(Star):
     def __init__(self, context: Context, config):
@@ -61,7 +61,7 @@ class AtSomeonePlugin(Star):
                     prefix_text = text[last_end:start]
                     # 如果之前有At组件，需要在此文本前加零宽空格
                     if need_prefix_zwsp:
-                        prefix_text = '\u200B \u200B' + prefix_text
+                        prefix_text = '\u200B' + prefix_text
                         need_prefix_zwsp = False
                     new_chain.append(Comp.Plain(text=prefix_text))
 
@@ -86,7 +86,7 @@ class AtSomeonePlugin(Star):
                     # 当无法解析为有效的@组件时，将原始文本发回，使失败变得可见
                     suffix_text = match.group(0)
                     if need_prefix_zwsp:
-                        suffix_text = '\u200B \u200B' + suffix_text
+                        suffix_text = '\u200B' + suffix_text
                         need_prefix_zwsp = False
                     new_chain.append(Comp.Plain(text=suffix_text))
                 
@@ -96,11 +96,11 @@ class AtSomeonePlugin(Star):
                 # 添加剩余文本
                 remaining_text = text[last_end:]
                 if need_prefix_zwsp:
-                    remaining_text = '\u200B \u200B' + remaining_text
+                    remaining_text = '\u200B' + remaining_text
                     need_prefix_zwsp = False
                 new_chain.append(Comp.Plain(text=remaining_text))
             elif need_prefix_zwsp:
                 # 如果At组件在最后，且后面没有文本，添加一个仅包含零宽空格的Plain
-                new_chain.append(Comp.Plain(text='\u200B \u200B'))
+                new_chain.append(Comp.Plain(text='\u200B'))
 
         result.chain = new_chain
