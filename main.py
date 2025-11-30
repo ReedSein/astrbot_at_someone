@@ -10,7 +10,7 @@ from astrbot.core.message.components import BaseMessageComponent
     "at_someone",
     "sasapp77",
     "让bot学会主动@别人，需要配合系统提示词",
-    "1.0.3",
+    "1.0.5",
     ""
 )
 class AtSomeonePlugin(Star):
@@ -122,8 +122,6 @@ class AtSomeonePlugin(Star):
                     new_chain.append(Comp.Plain(text=' ')) 
                 else:
                     # 解析失败
-                    # 仅在调试时输出 Warning，避免刷屏
-                    # logger.warning(f"Plugin 'at_someone': Cannot find user '{content}' in group {group.group_id}")
                     new_chain.append(Comp.Plain(text=match.group(0)))
                 
                 last_end = end
@@ -138,15 +136,3 @@ class AtSomeonePlugin(Star):
 
         # 5. 应用修改
         result.chain = new_chain
-```
-
-### 解释
-我在代码中修改了这一段：
-```python
-# 原来的代码（会报错）
-# if member.card: 
-
-# 新的代码（安全）
-card = getattr(member, "card", None)
-if card:
-    members_map[card] = member.user_id
