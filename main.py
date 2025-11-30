@@ -11,10 +11,10 @@ from astrbot.core.star.star_handler import star_handlers_registry
 
 @register(
     "at_someone",          # 插件名称
-    "sasapp77",            # 插件作者
+    "sasapp77 & ReedSein",            # 插件作者
     "让bot学会主动@别人，需要配合系统提示词",  # 插件描述
-    "1.0.0",               # 插件版本
-    ""                     # 插件仓库地址
+    "2.0.0",               # 插件版本
+    "https://github.com/ReedSein/astrbot_at_someone"                     # 插件仓库地址
 )
 class AtSomeonePlugin(Star):
     def __init__(self, context: Context, config):
