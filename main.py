@@ -10,7 +10,7 @@ from astrbot.core.message.components import BaseMessageComponent
     "at_someone",
     "sasapp77",
     "让bot学会主动@别人，需要配合系统提示词",
-    "1.0.5",
+    "1.0.6",
     ""
 )
 class AtSomeonePlugin(Star):
@@ -21,24 +21,27 @@ class AtSomeonePlugin(Star):
         self.at_pattern = re.compile(r"<@(.*?)>")
 
     # -------------------------------------------------------------------------
-    # Stage 1: 预处理 (Pre-processing) / 粘合剂
+    # Stage 1: 预处理 (Pre-processing) / 粘合剂 + 强制空格
     # -------------------------------------------------------------------------
     @filter.on_llm_response()
     async def flatten_newlines(self, event: AstrMessageEvent, resp: LLMResponse):
         """
-        在 AstrBot 核心分段器介入之前，清理 LLM 的输出。
-        将 <@xxx> 后面紧跟的换行符(\n)、制表符(\t)等统一替换为单个空格。
+        1. 防止分段：将换行符替换为空格。
+        2. 强制间隔：将 <@xxx> 后面的任意空白（或无空白）强制替换为一个标准空格。
         """
         if resp.completion_text:
-            resp.completion_text = re.sub(r'(<@.*?>)\s+', r'\1 ', resp.completion_text)
+            # 解释：\s* 匹配0个或多个空白。
+            # 无论 LLM 输出 "<@user>text" 还是 "<@user>\ntext"
+            # 都会被替换为 "<@user> text" (注意中间有个空格)
+            resp.completion_text = re.sub(r'(<@.*?>)\s*', r'\1 ', resp.completion_text)
 
     # -------------------------------------------------------------------------
-    # Stage 2: 渲染 (Rendering) / 拟人化处理
+    # Stage 2: 渲染 (Rendering)
     # -------------------------------------------------------------------------
     @filter.on_decorating_result(priority=-200)
     async def handle_at_conversion(self, event: AstrMessageEvent):
         """
-        将文本中的 <@xxx> 标签转换为真实的 At 消息组件，并添加拟人化的空格。
+        将文本中的 <@xxx> 标签转换为真实的 At 消息组件。
         """
         result = event.get_result()
         msg_chain = result.chain
@@ -72,15 +75,13 @@ class AtSomeonePlugin(Star):
         if not group or not group.members:
             return
 
-        # 构建映射表：使用 getattr 安全访问属性，防止 AttributeError
+        # 构建映射表：使用 getattr 安全访问属性
         members_map = {}
         for member in group.members:
-            # 必须有的属性
             if member.nickname:
                 members_map[member.nickname] = member.user_id
             
-            # 可能不存在的属性（使用 getattr 安全获取）
-            # 某些适配器可能没有直接把 card 映射到 member 对象上
+            # 安全获取 card 属性
             card = getattr(member, "card", None)
             if card:
                 members_map[card] = member.user_id
@@ -118,8 +119,10 @@ class AtSomeonePlugin(Star):
                 # C. 构建组件
                 if user_id_to_at is not None:
                     new_chain.append(Comp.At(qq=user_id_to_at))
-                    # 拟人化空格
-                    new_chain.append(Comp.Plain(text=' ')) 
+                    # 【重要修改】
+                    # 这里不再单独添加 Comp.Plain(text=' ') 组件
+                    # 因为单独的空格组件容易被客户端吞掉。
+                    # 我们依赖 Stage 1 强制生成的空格，让它留在 remaining_text 的开头。
                 else:
                     # 解析失败
                     new_chain.append(Comp.Plain(text=match.group(0)))
@@ -129,8 +132,13 @@ class AtSomeonePlugin(Star):
             # 5. 添加剩余文本
             if last_end < len(text):
                 remaining_text = text[last_end:]
-                # 去除 Stage 1 留下的粘合剂空格
-                remaining_text = remaining_text.lstrip()
+                
+                # 【重要修改】
+                # 删除了 .lstrip()。
+                # 因为 Stage 1 保证了 remaining_text 一定是以空格开头的 (例如 " 嗯。快点...")
+                # 我们保留这个空格，让它作为 Plain 文本的一部分发送。
+                # 这样客户端就会乖乖渲染出 "[At] 嗯。快点..." (中间有空隙)
+                
                 if remaining_text:
                     new_chain.append(Comp.Plain(text=remaining_text))
 
