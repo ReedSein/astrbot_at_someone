@@ -1,6 +1,7 @@
 import re
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.provider import ProviderResponse
+# 修正点：将 ProviderResponse 改为 LLMResponse
+from astrbot.api.provider import LLMResponse  
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 import astrbot.api.message_components as Comp
@@ -25,7 +26,7 @@ class AtSomeonePlugin(Star):
     # Stage 1: 预处理 (Pre-processing) / 粘合剂
     # -------------------------------------------------------------------------
     @filter.on_llm_response()
-    async def flatten_newlines(self, event: AstrMessageEvent, resp: ProviderResponse):
+    async def flatten_newlines(self, event: AstrMessageEvent, resp: LLMResponse):
         """
         在 AstrBot 核心分段器介入之前，清理 LLM 的输出。
         将 <@xxx> 后面紧跟的换行符(\n)、制表符(\t)等统一替换为单个空格。
@@ -47,7 +48,6 @@ class AtSomeonePlugin(Star):
         msg_chain = result.chain
         
         # 1. 快速检查：如果消息链中没有 Plain 文本包含 "<@"，直接返回
-        # 这一步能大幅减少不必要的计算，提升高并发下的性能
         has_tag = False
         for component in msg_chain:
             if isinstance(component, Comp.Plain) and "<@" in component.text:
@@ -79,7 +79,6 @@ class AtSomeonePlugin(Star):
             return
 
         # 构建映射表：优先使用 card (群名片)，其次使用 nickname (昵称)
-        # 这样 LLM 呼叫用户的群名片也能成功 @
         members_map = {}
         for member in group.members:
             if member.nickname:
@@ -89,7 +88,7 @@ class AtSomeonePlugin(Star):
 
         # 4. 遍历并重组消息链
         for component in msg_chain:
-            # 只处理纯文本组件，保留图片/语音等其他组件
+            # 只处理纯文本组件
             if not isinstance(component, Comp.Plain):
                 new_chain.append(component)
                 continue
@@ -114,11 +113,10 @@ class AtSomeonePlugin(Star):
                 elif content in members_map:
                     user_id_to_at = int(members_map[content])
                 else:
-                    # 尝试处理类似 "123456" 这种纯数字字符串
                     try:
                         user_id_to_at = int(content)
                     except ValueError:
-                        pass # 确实找不到
+                        pass 
                 
                 # C. 构建组件
                 if user_id_to_at is not None:
@@ -126,10 +124,9 @@ class AtSomeonePlugin(Star):
                     new_chain.append(Comp.At(qq=user_id_to_at))
                     
                     # 【拟人化关键】：插入一个标准的半角空格
-                    # 官方客户端在 @ 后会自动跟一个空格
                     new_chain.append(Comp.Plain(text=' ')) 
                 else:
-                    # 解析失败（找不到人），回退为原始文本，提示用户/LLM 出错了
+                    # 解析失败（找不到人），回退为原始文本
                     logger.warning(f"Plugin 'at_someone': 无法在群 {group.group_id} 找到用户 '{content}'")
                     new_chain.append(Comp.Plain(text=match.group(0)))
                 
@@ -139,11 +136,7 @@ class AtSomeonePlugin(Star):
             if last_end < len(text):
                 remaining_text = text[last_end:]
                 
-                # 【细节优化】：
-                # 因为我们在 Stage 1 (on_llm_response) 中把换行符替换成了空格，
-                # 所以 remaining_text 很有可能以空格开头。
-                # 而我们在上面步骤 C 中已经手动插入了一个“拟人化空格”。
-                # 为了避免双重空格 (At  Text)，我们需要去除 remaining_text 左侧的空白。
+                # 【细节优化】：去除 Stage 1 中留下的粘合剂空格
                 remaining_text = remaining_text.lstrip()
                 
                 if remaining_text:
