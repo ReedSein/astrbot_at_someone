@@ -23,9 +23,15 @@ class AtSomeonePlugin(Star):
         self.at_num_pattern = re.compile(
             r"(?<![^\s\u200b])@(?P<qq>\d{5,20})(?=$|[\s\u200b]|[，。！？；：、,!?:;])",
         )
+        self.at_name_num_pattern = re.compile(
+            r"(?<![^\s\u200b])@[^@\s()（）]{1,32}\s*[（(](?P<qq>\d{5,20})[）)]"
+            r"(?=$|[\s\u200b]|[，。！？；：、,!?:;])",
+        )
         self.at_token_pattern = re.compile(
             r"<@(?P<tag>[^>]*)>|"
-            r"(?<![^\s\u200b])@(?P<qq>\d{5,20})(?=$|[\s\u200b]|[，。！？；：、,!?:;])",
+            r"(?<![^\s\u200b])@(?P<qq>\d{5,20})(?=$|[\s\u200b]|[，。！？；：、,!?:;])|"
+            r"(?<![^\s\u200b])@[^@\s()（）]{1,32}\s*[（(](?P<qq_paren>\d{5,20})[）)]"
+            r"(?=$|[\s\u200b]|[，。！？；：、,!?:;])",
         )
         super().__init__(context)
         star_handlers_registry._print_handlers()
@@ -70,18 +76,22 @@ class AtSomeonePlugin(Star):
 
         has_at_tag = False
         has_at_num = False
+        has_at_name_num = False
         for component in msg_chain:
             if not isinstance(component, Comp.Plain):
                 continue
             text = component.text
             if not has_at_tag and "<@" in text:
                 has_at_tag = True
-            if not has_at_num and "@" in text and self.at_num_pattern.search(text):
-                has_at_num = True
-            if has_at_tag or has_at_num:
+            if "@" in text:
+                if not has_at_num and self.at_num_pattern.search(text):
+                    has_at_num = True
+                if not has_at_name_num and self.at_name_num_pattern.search(text):
+                    has_at_name_num = True
+            if has_at_tag or has_at_num or has_at_name_num:
                 break
 
-        if not has_at_tag and not has_at_num:
+        if not has_at_tag and not has_at_num and not has_at_name_num:
             return
 
         group_id_for_log = event.get_group_id() or event.unified_msg_origin
@@ -122,7 +132,8 @@ class AtSomeonePlugin(Star):
 
                 user_id_to_at = None
 
-                if qq := match.group("qq"):
+                qq = match.group("qq") or match.group("qq_paren")
+                if qq:
                     user_id_to_at = int(qq)
                 else:
                     content = (match.group("tag") or "").strip()
