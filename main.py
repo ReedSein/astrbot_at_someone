@@ -20,6 +20,13 @@ class AtSomeonePlugin(Star):
     def __init__(self, context: Context, config):
         self.config = config
         self.at_pattern = re.compile(r"<@(.*?)>")
+        self.at_num_pattern = re.compile(
+            r"(?<![^\s\u200b])@(?P<qq>\d{5,20})(?=$|[\s\u200b]|[，。！？；：、,!?:;])",
+        )
+        self.at_token_pattern = re.compile(
+            r"<@(?P<tag>[^>]*)>|"
+            r"(?<![^\s\u200b])@(?P<qq>\d{5,20})(?=$|[\s\u200b]|[，。！？；：、,!?:;])",
+        )
         super().__init__(context)
         star_handlers_registry._print_handlers()
 
@@ -61,11 +68,20 @@ class AtSomeonePlugin(Star):
             result.chain = new_chain
             return
 
-        has_at_tag = any(
-            isinstance(component, Comp.Plain) and "<@" in component.text
-            for component in msg_chain
-        )
-        if not has_at_tag:
+        has_at_tag = False
+        has_at_num = False
+        for component in msg_chain:
+            if not isinstance(component, Comp.Plain):
+                continue
+            text = component.text
+            if not has_at_tag and "<@" in text:
+                has_at_tag = True
+            if not has_at_num and "@" in text and self.at_num_pattern.search(text):
+                has_at_num = True
+            if has_at_tag or has_at_num:
+                break
+
+        if not has_at_tag and not has_at_num:
             return
 
         group_id_for_log = event.get_group_id() or event.unified_msg_origin
@@ -77,17 +93,21 @@ class AtSomeonePlugin(Star):
                 new_chain.append(component)
                 continue
 
-            if "<@" not in component.text:
+            if "<@" not in component.text and "@" not in component.text:
                 new_chain.append(component)
                 continue
 
             convert = getattr(component, "convert", True)
             text = component.text
+            if not self.at_token_pattern.search(text):
+                new_chain.append(component)
+                continue
+
             last_end = 0
             # 标记下一个文本片段是否需要前置零宽空格
             need_prefix_zwsp = False
             
-            for match in self.at_pattern.finditer(text):
+            for match in self.at_token_pattern.finditer(text):
                 start, end = match.span()
                 if start > last_end:
                     # 添加匹配前的文本
@@ -100,41 +120,45 @@ class AtSomeonePlugin(Star):
                         Comp.Plain(text=prefix_text, convert=convert),
                     )
 
-                content = match.group(1).strip()
                 user_id_to_at = None
 
-                if content.isdigit():
-                    user_id_to_at = int(content)
+                if qq := match.group("qq"):
+                    user_id_to_at = int(qq)
                 else:
-                    if members_map is None and not members_map_failed:
-                        try:
-                            group = await event.get_group()
-                        except Exception as e:
-                            logger.warning(
-                                f"获取群信息失败，无法解析 @昵称：{e}",
-                            )
-                            members_map_failed = True
-                            members_map = {}
-                        else:
-                            if group and group.members:
-                                members_map = {
-                                    member.nickname: str(member.user_id)
-                                    for member in group.members
-                                    if member.nickname
-                                }
-                            else:
+                    content = (match.group("tag") or "").strip()
+                    if content.isdigit():
+                        user_id_to_at = int(content)
+                    else:
+                        if members_map is None and not members_map_failed:
+                            try:
+                                group = await event.get_group()
+                            except Exception as e:
                                 logger.warning(
-                                    f"未获取到群成员列表，无法解析 @昵称：group_id={group_id_for_log}",
+                                    f"获取群信息失败，无法解析 @昵称：{e}",
                                 )
                                 members_map_failed = True
                                 members_map = {}
+                            else:
+                                if group and group.members:
+                                    members_map = {
+                                        member.nickname: str(member.user_id)
+                                        for member in group.members
+                                        if member.nickname
+                                    }
+                                else:
+                                    logger.warning(
+                                        "未获取到群成员列表，无法解析 @昵称："
+                                        f"group_id={group_id_for_log}",
+                                    )
+                                    members_map_failed = True
+                                    members_map = {}
 
-                    if members_map and content in members_map:
-                        user_id_to_at = int(members_map[content])
-                    elif not members_map_failed:
-                        logger.warning(
-                            f"在群 '{group_id_for_log}' 中无法找到昵称为 '{content}' 的用户，已跳过@。",
-                        )
+                        if members_map and content in members_map:
+                            user_id_to_at = int(members_map[content])
+                        elif not members_map_failed:
+                            logger.warning(
+                                f"在群 '{group_id_for_log}' 中无法找到昵称为 '{content}' 的用户，已跳过@。",
+                            )
                 
                 if user_id_to_at is not None:
                     new_chain.append(Comp.At(qq=user_id_to_at))
